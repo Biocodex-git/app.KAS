@@ -12,9 +12,10 @@ import pandas as pd
 from datetime import datetime
 import os
 
+
 st.set_page_config(page_title="Подтверждение аптек", layout="wide")
 st.title("Система набора аптек для таргет базы")
-
+st.set_option("client.disableDataExport", True)
 # ====================== Файлы ======================
 ADMINS_FILE = "admin.xlsx"
 AUTH_FILE = "Log.xlsx"
@@ -23,7 +24,7 @@ SUBMISSIONS_FILE = "submissions.xlsx"
 
 # ====================== Разделение на линии ======================
 PRODUCTS_G = ["Сафорель", "Стимол", "Стрезам"]
-PRODUCTS_BASE = ["Энтерол", "Альфлорекс", "Отипакс", "А-церумен", "Сафорель"]
+PRODUCTS_BASE = ["Энтерол", "Альфлорекс", "Отипакс", "А-церумен", "Стимол"]
 PRODUCTS_RD = ["Энтерол", "Альфлорекс", "Отипакс", "А-церумен", "Стрезам", "Сафорель", "Стимол"]
 ALL_PRODUCTS = PRODUCTS_RD #нужно для проверки загружаемого файла на ниличие всех необходимых колонок
 
@@ -628,6 +629,7 @@ else:
                         "Сафорель": row.get("Сафорель"),
                         "Стимол": row.get("Стимол"),
                         "ИНН": row.get("ИНН", ""),
+                        "ID ЛПУ": row.get("ID ЛПУ", ""),
                         "notes": notes,
                     })
                 new_df = pd.DataFrame(new_rows)
