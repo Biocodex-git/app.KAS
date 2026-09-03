@@ -12,10 +12,10 @@ import pandas as pd
 from datetime import datetime
 import os
 
-
 st.set_page_config(page_title="Подтверждение аптек", layout="wide")
 st.title("Система набора аптек для таргет базы")
 st.set_option("client.disableDataExport", True)
+
 # ====================== Файлы ======================
 ADMINS_FILE = "admin.xlsx"
 AUTH_FILE = "Log.xlsx"
@@ -26,7 +26,7 @@ SUBMISSIONS_FILE = "submissions.xlsx"
 PRODUCTS_G = ["Сафорель", "Стимол", "Стрезам"]
 PRODUCTS_BASE = ["Энтерол", "Альфлорекс", "Отипакс", "А-церумен", "Стимол"]
 PRODUCTS_RD = ["Энтерол", "Альфлорекс", "Отипакс", "А-церумен", "Стрезам", "Сафорель", "Стимол"]
-ALL_PRODUCTS = PRODUCTS_RD #нужно для проверки загружаемого файла на ниличие всех необходимых колонок
+ALL_PRODUCTS = PRODUCTS_RD  # нужно для проверки загружаемого файла на ниличие всех необходимых колонок
 
 # ====================== Указания при загрузке ======================
 def load_admins():
@@ -60,6 +60,32 @@ def save_uploaded_excel(uploaded_file, target_path: str) -> bool:
         return True
     except Exception as e:
         st.error(f"Не удалось сохранить файл: {e}")
+        return False
+
+def archive_submissions_to_csv() -> str | None:
+    """Archive current submissions to a timestamped CSV. Returns the filename or None."""
+    if not os.path.exists(SUBMISSIONS_FILE):
+        return None
+    try:
+        subs = pd.read_excel(SUBMISSIONS_FILE)
+        if subs.empty:
+            return None
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive_name = f"submissions_archive_{ts}.csv"
+        subs.to_csv(archive_name, index=False, encoding="utf-8-sig")
+        return archive_name
+    except Exception as e:
+        st.error(f"Не удалось создать архив подтверждений: {e}")
+        return None
+
+def delete_file(path: str) -> bool:
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+            return True
+        return False
+    except Exception as e:
+        st.error(f"Не удалось удалить файл {path}: {e}")
         return False
 
 def get_user_cities(user: dict) -> list:
@@ -222,14 +248,12 @@ def login_page():
             if auth.empty:
                 st.error("Данные пользователей ещё не загружены. Попросите администратора загрузить Log.xlsx.")
                 return
-
             cols = {c.lower().strip(): c for c in auth.columns}
             login_col = cols.get("login")
             pass_col = cols.get("pass-code") or cols.get("passcode") or cols.get("password")
             if not login_col or not pass_col:
                 st.error("В файле пользователей нужны колонки: login, pass-code")
                 return
-
             df = auth.copy()
             df["_login"] = df[login_col].astype(str).str.strip()
             df["_pass"] = df[pass_col].astype(str).str.strip()
@@ -240,13 +264,11 @@ def login_page():
             if row.empty:
                 st.error("Неверный login или pass-code")
                 return
-
             user_dict = row.iloc[0].to_dict()
             normalized = {}
             for k, v in user_dict.items():
                 normalized[str(k).strip()] = v
                 normalized[str(k).strip().lower()] = v
-
             st.session_state.logged_in = True
             st.session_state.is_admin = False
             st.session_state.current_user = normalized
@@ -306,10 +328,16 @@ if is_admin:
             users_file = st.file_uploader("Загрузить Log (пользователи)", type=["xlsx", "xls"], key="upload_users")
             if users_file is not None:
                 if st.button("Сохранить пользователей", type="primary", key="save_users"):
+                    # Archive current submissions before replacing users data
+                    archive_name = archive_submissions_to_csv()
+                    if archive_name:
+                        st.info(f"Текущие подтверждения сохранены в архив: **{archive_name}**")
                     if save_uploaded_excel(users_file, AUTH_FILE):
-                        st.success(f"Файл сохранён: {AUTH_FILE}")
+                        # Reset submissions so a new cycle of choices starts
+                        delete_file(SUBMISSIONS_FILE)
+                        st.success(f"Файл сохранён: {AUTH_FILE}. Подтверждения сброшены (архив создан).")
                         st.cache_data.clear()
-
+                        st.rerun()
         with c2:
             st.markdown(f"**2. Организации** → `{PLACES_FILE}`")
             st.caption(
@@ -320,9 +348,50 @@ if is_admin:
             places_file = st.file_uploader("Загрузить Target (места)", type=["xlsx", "xls"], key="upload_places")
             if places_file is not None:
                 if st.button("Сохранить места", type="primary", key="save_places"):
+                    # Archive current submissions before replacing places data
+                    archive_name = archive_submissions_to_csv()
+                    if archive_name:
+                        st.info(f"Текущие подтверждения сохранены в архив: **{archive_name}**")
                     if save_uploaded_excel(places_file, PLACES_FILE):
-                        st.success(f"Файл сохранён: {PLACES_FILE}")
+                        # Reset submissions so a new cycle of choices starts
+                        delete_file(SUBMISSIONS_FILE)
+                        st.success(f"Файл сохранён: {PLACES_FILE}. Подтверждения сброшены (архив создан).")
                         st.cache_data.clear()
+                        st.rerun()
+
+        st.divider()
+        st.markdown("### Сброс / удаление файлов (Unupload)")
+        st.caption(
+            "Удаление файлов. Перед удалением подтверждений они автоматически сохраняются в CSV-архив."
+        )
+        u1, u2, u3 = st.columns(3)
+        with u1:
+            if st.button("Удалить пользователей (Log.xlsx)", type="secondary", key="del_users"):
+                if delete_file(AUTH_FILE):
+                    st.success(f"{AUTH_FILE} удалён.")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.warning("Файл пользователей не найден.")
+        with u2:
+            if st.button("Удалить места (Trade.xlsx)", type="secondary", key="del_places"):
+                if delete_file(PLACES_FILE):
+                    st.success(f"{PLACES_FILE} удалён.")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.warning("Файл мест не найден.")
+        with u3:
+            if st.button("Удалить подтверждения + архив в CSV", type="secondary", key="del_subs"):
+                archive_name = archive_submissions_to_csv()
+                if archive_name:
+                    st.info(f"Архив создан: **{archive_name}**")
+                if delete_file(SUBMISSIONS_FILE):
+                    st.success("Подтверждения удалены. Новый цикл выбора готов.")
+                    st.cache_data.clear()
+                    st.rerun()
+                else:
+                    st.warning("Файл подтверждений не найден.")
 
         st.divider()
         s1, s2, s3 = st.columns(3)
@@ -362,7 +431,7 @@ if is_admin:
                          use_container_width=True, hide_index=True)
             st.download_button(
                 "Скачать подтверждения (CSV)",
-                submissions.to_csv(index=False).encode(),
+                submissions.to_csv(index=False).encode("utf-8-sig"),
                 f"submissions_{datetime.now().strftime('%Y%m%d')}.csv",
                 "text/csv"
             )
@@ -384,6 +453,7 @@ if is_admin:
         else:
             st.caption(f"Пользователей: **{len(auth)}**")
             st.dataframe(auth, use_container_width=True, hide_index=True)
+
         st.markdown(f"### {PLACES_FILE}")
         places = load_places()
         if places.empty:
@@ -435,20 +505,22 @@ if filtered.empty:
 
 # ---------- Фильтры ----------
 st.sidebar.subheader("Поиск и фильтры")
-
 sort_options = ["По умолчанию"]
 for p in visible_products:
     sort_options.append(f"{p} (High to Low)")
 sort_options.append("Total Sales (High to Low)")
-
 sort_option = st.sidebar.selectbox("Сортировка", sort_options)
+
 show_only_high = st.sidebar.checkbox("Только с высокими продажами", value=False)
 show_only_available = st.sidebar.checkbox("Только доступные организации", value=True)
 target_filter = st.sidebar.selectbox("Таргет", ["Все", "Да", "Нет"])
+
+search_city = st.sidebar.text_input("Поиск по городу", placeholder="Город...").strip().lower()
 search_address = st.sidebar.text_input("Поиск по адресу", placeholder="Адрес...").strip().lower()
 search_kas = st.sidebar.text_input("Поиск по КАС", placeholder="КАС...").strip().lower()
 
 st.subheader(f"Выбор организаций — {', '.join(s.upper() for s in user_scopes)} | Категория: {user_category.upper()}")
+
 if user_category == "rd":
     st.info("Категория RD: вы видите таблицу организаций, но **не можете выбирать** новые. Можно искать по адресу и отменять существующие выборы.")
 
@@ -506,6 +578,10 @@ if target_filter == "Да":
 elif target_filter == "Нет":
     filtered = filtered[filtered["Таргет"] == "нет"]
 
+# Search by city (new)
+if search_city and "Город" in filtered.columns:
+    filtered = filtered[filtered["Город"].astype(str).str.lower().str.contains(search_city, na=False)]
+
 if search_address and "Адрес" in filtered.columns:
     filtered = filtered[filtered["Адрес"].astype(str).str.lower().str.contains(search_address, na=False)]
 
@@ -545,6 +621,7 @@ else:
 m2.metric("Уже выбрано", sum(1 for k in taken_map if k in set(filtered["id"])))
 m3.metric("Доступно сейчас", len(filtered))
 m4.metric("Выбрано вами", chosen_by_user)
+
 st.caption(f"Всего подтверждений в системе: **{chosen_total}** | Ваша категория: **{user_category.upper()}**")
 
 # ---------- TABLE (Trade) ----------
@@ -575,7 +652,6 @@ else:
     # Обычные пользователи: с выбором
     filtered["Select"] = False
     visible_cols = ["Select"] + visible_cols
-
     edited_df = st.data_editor(
         filtered[visible_cols],
         hide_index=True,
@@ -600,14 +676,11 @@ else:
             selected_full = filtered.loc[edited_df.index[selected_mask]].copy()
             latest = load_submissions()
             taken_keys = set(latest["id"].astype(str).str.strip()) if not latest.empty and "id" in latest.columns else set()
-
             selected_full["key"] = selected_full["id"].astype(str).str.strip()
             conflict = selected_full[selected_full["key"].isin(taken_keys)]
             valid = selected_full[~selected_full["key"].isin(taken_keys)]
-
             if not conflict.empty:
                 st.error(f"{len(conflict)} организация(и) уже заняты и не были сохранены.")
-
             if valid.empty:
                 st.warning("Нет доступных организаций для сохранения.")
             else:
@@ -643,10 +716,8 @@ else:
                 st.rerun()
 
 # ====================== Отмена выбора ================================
-
 st.divider()
 st.subheader("Отмена выбора")
-
 if user_category == "rd":
     st.caption("Категория RD — вы можете отменять выбор **любых** пользователей.")
     view_subs = submissions.copy() if not submissions.empty else pd.DataFrame()
@@ -662,15 +733,12 @@ if view_subs.empty:
 else:
     if search_address_undo and "Адрес" in view_subs.columns:
         view_subs = view_subs[view_subs["Адрес"].astype(str).str.lower().str.contains(search_address_undo, na=False)]
-
     if view_subs.empty:
         st.info("Нет записей, соответствующих поиску.")
     else:
         view_subs = view_subs.sort_values("submission_time", ascending=False).reset_index(drop=True)
         view_subs["Отменить"] = False
-
         undo_cols = [c for c in ["Отменить", "submission_time", "login", "id", "Город", "Организация", "Адрес", "Таргет", "notes"] if c in view_subs.columns]
-
         edited_undo = st.data_editor(
             view_subs[undo_cols],
             hide_index=True,
@@ -683,7 +751,6 @@ else:
             },
             key="undo_editor"
         )
-
         if st.button("Отменить отмеченные организации", type="secondary", use_container_width=True):
             to_cancel = edited_undo["Отменить"] == True
             if not to_cancel.any():
@@ -691,7 +758,6 @@ else:
             else:
                 cancel_df = view_subs.loc[edited_undo.index[to_cancel]]
                 ids_to_cancel = set(cancel_df["id"].astype(str).str.strip())
-
                 latest = load_submissions()
                 if latest.empty:
                     st.warning("Файл пуст.")
